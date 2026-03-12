@@ -1,5 +1,5 @@
 #include "DCT.h"
-
+#include <vector>
 // TODO Phase 2: Implement DCT and IDCT
 
 void computeDCT(std::vector<std::vector<double>>& block, int N)
