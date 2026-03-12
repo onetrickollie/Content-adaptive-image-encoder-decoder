@@ -1,30 +1,38 @@
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.10)
 
 project(ImageDisplay)
 
 set(CMAKE_CXX_STANDARD 17)
 
 # Add source files
+# Note: manifest/MyImageApplication.rc is Windows-only, ignored on Mac/Linux
 set(SOURCES
     src/Main.cpp
     src/Image.cpp
     src/DCT.cpp
     src/Encoder.cpp
     src/Decoder.cpp
-    manifest/MyImageApplication.rc
 )
 
 if(WIN32)
+    # On Windows: build wxWidgets from bundled source
     set(wxBUILD_SHARED OFF)
-    # or you can set it to ON, but you may face some problems about can't find dlls, in this case, you can copy dlls to your exe directory
+    list(APPEND SOURCES manifest/MyImageApplication.rc)
+    add_subdirectory(dependency/wxWidgets)
+    set(WX_LIBS wx::core wx::base)
 else()
-    set(wxBUILD_SHARED ON)
+    # On Mac/Linux: use system-installed wxWidgets (e.g. via Homebrew)
+    # Install on Mac with: brew install wxwidgets
+    find_package(wxWidgets REQUIRED COMPONENTS core base)
+    include(${wxWidgets_USE_FILE})
+    set(WX_LIBS ${wxWidgets_LIBRARIES})
 endif()
-
-add_subdirectory(dependency/wxWidgets)
 
 # Create executable
 add_executable(myProgram ${SOURCES})
+
+# Add src/ so that #include "Image.h" etc. resolve correctly
+target_include_directories(myProgram PRIVATE src)
 
 # X11 required on Linux
 if(UNIX AND NOT APPLE)
@@ -32,4 +40,4 @@ if(UNIX AND NOT APPLE)
 endif()
 
 # Link libraries
-target_link_libraries(myProgram wx::core wx::base ${X11_LIBRARIES})
+target_link_libraries(myProgram ${WX_LIBS} ${X11_LIBRARIES})

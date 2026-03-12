@@ -1,17 +1,27 @@
 #include <wx/wx.h>
 #include <wx/dcbuffer.h>
-#include <filesystem>
+
 #include <iostream>
-#include <fstream>
 #include <string>
-#include <vector>
+#include <cstdlib>
+
+#include "Image.h"
+
+// These will be uncommented as we build each phase:
+// #include "Encoder.h"
+// #include "Decoder.h"
 
 using namespace std;
-namespace fs = std::filesystem;
 
 /**
- * Display an image using WxWidgets.
- * https://www.wxwidgets.org/
+ * Main.cpp
+ * InputImage - path to a .rgb image file
+ * M  - 1 for standard 8x8 DCT, 2 for adaptive NxN DCT
+ * Q  - quantization step where Q is non-negative int, or -1 for auto compute
+ * B  - target bits per pixel (float > 0.0), ir -1.0 if Q is given
+ * Note: Either Q or B must be -1
+ * Keyboard functions:
+ * B/b  - toggle block boundary display on/off
  */
 
 /** Declarations*/
@@ -20,151 +30,207 @@ namespace fs = std::filesystem;
  * Class that implements wxApp
  */
 class MyApp : public wxApp {
- public:
-  bool OnInit() override;
+public:
+    bool OnInit() override;
 };
 
-/**
- * Class that implements wxFrame.
- * This frame serves as the top level window for the program
- */
 class MyFrame : public wxFrame {
- public:
-  MyFrame(const wxString &title, string imagePath);
+public:
+    MyFrame(const wxString& title, MyImage* displayImage);
 
- private:
-  void OnPaint(wxPaintEvent &event);
-  wxImage inImage;
-  wxScrolledWindow *scrolledWindow;
-  int width;
-  int height;
+private:
+    void OnPaint(wxPaintEvent& event);
+    void OnKeyDown(wxKeyEvent& event);
+
+    wxImage       wxImg;           // wxWidgets image object for display
+    wxScrolledWindow* scrolledWindow;
+
+    bool showBlockBoundaries;      // toggled by B key press
+    int  width;
+    int  height;
 };
 
-/** Utility function to read image data */
-unsigned char *readImageData(string imagePath, int width, int height);
+//-----------------------------------------------------------------------------
+// Global parameters parsed from command line
+//-----------------------------------------------------------------------------
+static string g_imagePath = "";
+static int    g_M         = 1;      // Mode: 1 = 8x8, 2 = adaptive NxN
+static int    g_Q         = -1;     // Quantization step, or -1
+static float  g_B         = -1.0f; // Target bits/pixel, or -1.0
 
-/** Definitions */
+//-----------------------------------------------------------------------------
+// MyApp::OnInit
+// Parses command line arguments, runs encode/decode pipeline, launches window
+//-----------------------------------------------------------------------------
+bool MyApp::OnInit()
+{
+    wxInitAllImageHandlers();
 
-/**
- * Init method for the app.
- * Here we process the command line arguments and
- * instantiate the frame.
- */
-bool MyApp::OnInit() {
-  wxInitAllImageHandlers();
+    // Expect exactly 4 arguments after the program name
+    if (wxApp::argc != 5)
+    {
+        cerr << "Usage: ./myProgram InputImage M Q B" << endl;
+        cerr << "  M : 1 (8x8 DCT) or 2 (adaptive NxN DCT)" << endl;
+        cerr << "  Q : quantization step (>=0), or -1 to auto-compute from B" << endl;
+        cerr << "  B : target bits/pixel (>0.0), or -1.0 if Q is given" << endl;
+        return false;
+    }
 
-  // deal with command line arguments here
-  cout << "Number of command line arguments: " << wxApp::argc << endl;
-  if (wxApp::argc != 2) {
-    cerr << "The executable should be invoked with exactly one filepath "
-            "argument. Example ./MyImageApplication '../../Lena_512_512.rgb'"
-         << endl;
-    exit(1);
-  }
-  cout << "First argument: " << wxApp::argv[0] << endl;
-  cout << "Second argument: " << wxApp::argv[1] << endl;
-  string imagePath = wxApp::argv[1].ToStdString();
+    // Parse arguments
+    g_imagePath = wxApp::argv[1].ToStdString();
+    g_M         = atoi(wxApp::argv[2].ToStdString().c_str());
+    g_Q         = atoi(wxApp::argv[3].ToStdString().c_str());
+    g_B         = atof(wxApp::argv[4].ToStdString().c_str());
 
-  MyFrame *frame = new MyFrame("Image Display", imagePath);
-  frame->Show(true);
+    // Validate M
+    if (g_M != 1 && g_M != 2)
+    {
+        cerr << "Error: M must be 1 or 2." << endl;
+        return false;
+    }
 
-  // return true to continue, false to exit the application
-  return true;
+    // Validate Q and B — exactly one must be -1
+    if (g_Q != -1 && g_B != -1.0f)
+    {
+        cerr << "Error: Q and B cannot both be positive. One must be -1." << endl;
+        return false;
+    }
+    if (g_Q == -1 && g_B <= 0.0f)
+    {
+        cerr << "Error: If Q is -1, B must be a positive float." << endl;
+        return false;
+    }
+    if (g_B == -1.0f && g_Q < 0)
+    {
+        cerr << "Error: If B is -1, Q must be a non-negative integer." << endl;
+        return false;
+    }
+
+    // Print parsed parameters for verification
+    cout << "Image Path : " << g_imagePath << endl;
+    cout << "Mode  (M)  : " << g_M << (g_M == 1 ? " (8x8 fixed blocks)" : " (adaptive NxN blocks)") << endl;
+    cout << "Quant (Q)  : " << g_Q << (g_Q == -1 ? " (auto-compute from B)" : "") << endl;
+    cout << "BPP   (B)  : " << g_B << (g_B == -1.0f ? " (controlled by Q)" : " bpp target") << endl;
+
+    //-------------------------------------------------------------------------
+    // Load the input image
+    //-------------------------------------------------------------------------
+    MyImage* inputImage = new MyImage();
+    inputImage->setWidth(IMAGE_WIDTH);
+    inputImage->setHeight(IMAGE_HEIGHT);
+    inputImage->setImagePath(g_imagePath.c_str());
+
+    if (!inputImage->ReadImage())
+    {
+        cerr << "Error: Failed to read image from: " << g_imagePath << endl;
+        return false;
+    }
+    cout << "Image loaded successfully." << endl;
+
+    //-------------------------------------------------------------------------
+    // TODO Phase 2: Run encoder pipeline here
+    // Encoder encoder(inputImage, g_M, g_Q, g_B);
+    // encoder.encode();
+    // encoder.saveDCTFile();
+    //
+    // TODO Phase 2: Run decoder pipeline here
+    // Decoder decoder(encoder);
+    // MyImage* outputImage = decoder.decode();
+    //
+    // For now, display the original unmodified image
+    //-------------------------------------------------------------------------
+    MyImage* displayImage = inputImage;
+
+    // Launch the display window
+    MyFrame* frame = new MyFrame("myProgram - DCT Image Codec", displayImage);
+    frame->Show(true);
+
+    return true;
 }
 
-/**
- * Constructor for the MyFrame class.
- * Here we read the pixel data from the file and set up the scrollable window.
- */
-MyFrame::MyFrame(const wxString &title, string imagePath)
-    : wxFrame(NULL, wxID_ANY, title) {
+//-----------------------------------------------------------------------------
+// MyFrame Constructor
+// Sets up the scrollable window and binds events
+//-----------------------------------------------------------------------------
+MyFrame::MyFrame(const wxString& title, MyImage* displayImage)
+    : wxFrame(NULL, wxID_ANY, title),
+      showBlockBoundaries(false)
+{
+    width  = displayImage->getWidth();
+    height = displayImage->getHeight();
 
-  // Modify the height and width values here to read and display an image with
-  // different dimensions.    
-  width = 512;
-  height = 512;
+    // Convert our raw RGB data into a wxImage for rendering
+    // wxImage expects malloc'd memory — it will own and free it
+    unsigned char* wxData =
+        (unsigned char*)malloc(width * height * 3 * sizeof(unsigned char));
 
-  unsigned char *inData = readImageData(imagePath, width, height);
+    char* srcData = displayImage->getImageData();
+    for (int i = 0; i < width * height * 3; i++)
+        wxData[i] = (unsigned char)srcData[i];
 
-  // the last argument is static_data, if it is false, after this call the
-  // pointer to the data is owned by the wxImage object, which will be
-  // responsible for deleting it. So this means that you should not delete the
-  // data yourself.
-  inImage.SetData(inData, width, height, false);
+    // SetData takes ownership of wxData (do not free manually)
+    wxImg.Create(width, height, wxData, false);
 
-  // Set up the scrolled window as a child of this frame
-  scrolledWindow = new wxScrolledWindow(this, wxID_ANY);
-  scrolledWindow->SetScrollbars(10, 10, width, height);
-  scrolledWindow->SetVirtualSize(width, height);
+    // Scrollable window setup
+    scrolledWindow = new wxScrolledWindow(this, wxID_ANY);
+    scrolledWindow->SetScrollbars(10, 10, width, height);
+    scrolledWindow->SetVirtualSize(width, height);
 
-  // Bind the paint event to the OnPaint function of the scrolled window
-  scrolledWindow->Bind(wxEVT_PAINT, &MyFrame::OnPaint, this);
+    // Bind paint and keyboard events
+    scrolledWindow->Bind(wxEVT_PAINT,   &MyFrame::OnPaint,   this);
+    scrolledWindow->Bind(wxEVT_KEY_DOWN, &MyFrame::OnKeyDown, this);
 
-  // Set the frame size
-  SetClientSize(width, height);
+    // Make scrolled window focusable so it receives key events
+    scrolledWindow->SetFocus();
 
-  // Set the frame background color
-  SetBackgroundColour(*wxBLACK);
+    SetClientSize(width, height);
+    SetBackgroundColour(*wxBLACK);
 }
 
-/**
- * The OnPaint handler that paints the UI.
- * Here we paint the image pixels into the scrollable window.
- */
-void MyFrame::OnPaint(wxPaintEvent &event) {
-  wxBufferedPaintDC dc(scrolledWindow);
-  scrolledWindow->DoPrepareDC(dc);
+//-----------------------------------------------------------------------------
+// MyFrame::OnPaint
+// Draws the reconstructed image. In Phase 4, also draws block boundaries.
+//-----------------------------------------------------------------------------
+void MyFrame::OnPaint(wxPaintEvent& event)
+{
+    wxBufferedPaintDC dc(scrolledWindow);
+    scrolledWindow->DoPrepareDC(dc);
 
-  wxBitmap inImageBitmap = wxBitmap(inImage);
-  dc.DrawBitmap(inImageBitmap, 0, 0, false);
+    // Draw the image
+    wxBitmap bmp(wxImg);
+    dc.DrawBitmap(bmp, 0, 0, false);
+
+    // TODO Phase 4: Draw block boundaries when showBlockBoundaries is true
+    if (showBlockBoundaries)
+    {
+        // Block boundary drawing will be implemented in Phase 4
+        // For now just a placeholder message in the title bar
+        SetTitle("myProgram - Block Boundaries: ON");
+    }
+    else
+    {
+        SetTitle("myProgram - Block Boundaries: OFF");
+    }
 }
 
-/** Utility function to read image data */
-unsigned char *readImageData(string imagePath, int width, int height) {
+//-----------------------------------------------------------------------------
+// MyFrame::OnKeyDown
+// Handles the B/b keyboard toggle for block boundary display
+//-----------------------------------------------------------------------------
+void MyFrame::OnKeyDown(wxKeyEvent& event)
+{
+    int keyCode = event.GetKeyCode();
 
-  // Open the file in binary mode
-  ifstream inputFile(imagePath, ios::binary);
+    if (keyCode == 'B' || keyCode == 'b')
+    {
+        showBlockBoundaries = !showBlockBoundaries;
+        cout << "Block boundaries: " << (showBlockBoundaries ? "ON" : "OFF") << endl;
 
-  if (!inputFile.is_open()) {
-    cerr << "Error Opening File for Reading" << endl;
-    exit(1);
-  }
+        // Trigger a repaint
+        scrolledWindow->Refresh();
+    }
 
-  // Create and populate RGB buffers
-  vector<char> Rbuf(width * height);
-  vector<char> Gbuf(width * height);
-  vector<char> Bbuf(width * height);
-
-  /**
-   * The input RGB file is formatted as RRRR.....GGGG....BBBB.
-   * i.e the R values of all the pixels followed by the G values
-   * of all the pixels followed by the B values of all pixels.
-   * Hence we read the data in that order.
-   */
-
-  inputFile.read(Rbuf.data(), width * height);
-  inputFile.read(Gbuf.data(), width * height);
-  inputFile.read(Bbuf.data(), width * height);
-
-  inputFile.close();
-
-  /**
-   * Allocate a buffer to store the pixel values
-   * The data must be allocated with malloc(), NOT with operator new. wxWidgets
-   * library requires this.
-   */
-  unsigned char *inData =
-      (unsigned char *)malloc(width * height * 3 * sizeof(unsigned char));
-      
-  for (int i = 0; i < height * width; i++) {
-    // We populate RGB values of each pixel in that order
-    // RGB.RGB.RGB and so on for all pixels
-    inData[3 * i] = Rbuf[i];
-    inData[3 * i + 1] = Gbuf[i];
-    inData[3 * i + 2] = Bbuf[i];
-  }
-
-  return inData;
+    event.Skip(); // Pass unhandled keys along
 }
 
 wxIMPLEMENT_APP(MyApp);
