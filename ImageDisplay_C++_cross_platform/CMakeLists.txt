@@ -7,6 +7,10 @@ set(CMAKE_CXX_STANDARD 17)
 # Add source files
 set(SOURCES
     src/Main.cpp
+    src/Image.cpp
+    src/DCT.cpp
+    src/Encoder.cpp
+    src/Decoder.cpp
     manifest/MyImageApplication.rc
 )
 
@@ -20,7 +24,7 @@ endif()
 add_subdirectory(dependency/wxWidgets)
 
 # Create executable
-add_executable(MyImageApplication ${SOURCES})
+add_executable(myProgram ${SOURCES})
 
 # X11 required on Linux
 if(UNIX AND NOT APPLE)
@@ -28,4 +32,4 @@ if(UNIX AND NOT APPLE)
 endif()
 
 # Link libraries
-target_link_libraries(MyImageApplication wx::core wx::base ${X11_LIBRARIES})
+target_link_libraries(myProgram wx::core wx::base ${X11_LIBRARIES})
