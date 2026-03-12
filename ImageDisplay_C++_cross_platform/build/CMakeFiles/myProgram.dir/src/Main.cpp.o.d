@@ -1205,4 +1205,6 @@ CMakeFiles/myProgram.dir/src/Main.cpp.o: \
   /opt/homebrew/include/wx-3.3/wx/mdi.h \
   /opt/homebrew/include/wx-3.3/wx/osx/mdi.h \
   /opt/homebrew/include/wx-3.3/wx/dcbuffer.h \
-  /Users/lucasliu/Desktop/Classes/CSCI576/Content\ adaptive\ image\ encoder/decoder/ImageDisplay_C++_cross_platform/src/Image.h
+  /Users/lucasliu/Desktop/Classes/CSCI576/Content\ adaptive\ image\ encoder/decoder/ImageDisplay_C++_cross_platform/src/Image.h \
+  /Users/lucasliu/Desktop/Classes/CSCI576/Content\ adaptive\ image\ encoder/decoder/ImageDisplay_C++_cross_platform/src/Encoder.h \
+  /Users/lucasliu/Desktop/Classes/CSCI576/Content\ adaptive\ image\ encoder/decoder/ImageDisplay_C++_cross_platform/src/Decoder.h
