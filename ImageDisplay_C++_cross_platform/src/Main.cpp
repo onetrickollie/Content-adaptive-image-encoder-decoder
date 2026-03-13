@@ -1,4 +1,4 @@
-//**
+//*****************************************************************************
 // Main.cpp : Entry point for myProgram
 //
 // Usage: ./myProgram InputImage M Q B
@@ -12,13 +12,14 @@
 //
 // Keyboard:
 //   B / b       - toggle block boundary display on/off
-//*
+//*****************************************************************************
 
 #include <wx/wx.h>
 #include <wx/dcbuffer.h>
 
 #include <iostream>
 #include <string>
+#include <vector>
 #include <cstdlib>
 
 #include "Image.h"
@@ -37,7 +38,11 @@ public:
 
 class MyFrame : public wxFrame {
 public:
-    MyFrame(const wxString& title, MyImage* displayImage);
+    // displayImage : reconstructed image to show
+    // blocks       : block map from encoder (used for boundary overlay)
+    MyFrame(const wxString& title,
+            MyImage* displayImage,
+            const vector<BlockData>& blocks);
 
 private:
     void OnPaint(wxPaintEvent& event);
@@ -49,6 +54,9 @@ private:
     bool showBlockBoundaries;
     int  width;
     int  height;
+
+    // Copy of block map for drawing boundaries
+    vector<BlockData> blocks;
 };
 
 //-----------------------------------------------------------------------------
@@ -140,8 +148,12 @@ bool MyApp::OnInit()
     Decoder decoder(encoder);
     MyImage* outputImage = decoder.decode();
 
-    // Display reconstructed image
-    MyFrame* frame = new MyFrame("myProgram - DCT Image Codec", outputImage);
+    // Launch display window, passing block map for boundary overlay
+    MyFrame* frame = new MyFrame(
+        "myProgram - DCT Image Codec",
+        outputImage,
+        encoder.getBlocks()
+    );
     frame->Show(true);
 
     return true;
@@ -150,9 +162,12 @@ bool MyApp::OnInit()
 //-----------------------------------------------------------------------------
 // MyFrame Constructor
 //-----------------------------------------------------------------------------
-MyFrame::MyFrame(const wxString& title, MyImage* displayImage)
+MyFrame::MyFrame(const wxString& title,
+                 MyImage* displayImage,
+                 const vector<BlockData>& blocks)
     : wxFrame(NULL, wxID_ANY, title),
-      showBlockBoundaries(false)
+      showBlockBoundaries(false),
+      blocks(blocks)
 {
     width  = displayImage->getWidth();
     height = displayImage->getHeight();
@@ -180,23 +195,40 @@ MyFrame::MyFrame(const wxString& title, MyImage* displayImage)
 
 //-----------------------------------------------------------------------------
 // MyFrame::OnPaint
+// Draws reconstructed image, then optionally overlays block boundaries
 //-----------------------------------------------------------------------------
 void MyFrame::OnPaint(wxPaintEvent& event)
 {
     wxBufferedPaintDC dc(scrolledWindow);
     scrolledWindow->DoPrepareDC(dc);
 
+    // Draw reconstructed image
     wxBitmap bmp(wxImg);
     dc.DrawBitmap(bmp, 0, 0, false);
 
+    // Draw block boundaries if toggled on
     if (showBlockBoundaries)
+    {
+        // Red pen for block outlines
+        dc.SetPen(wxPen(wxColour(255, 0, 0), 1));
+        dc.SetBrush(*wxTRANSPARENT_BRUSH);
+
+        for (const BlockData& bd : blocks)
+        {
+            dc.DrawRectangle(bd.startX, bd.startY, bd.N, bd.N);
+        }
+
         SetTitle("myProgram - Block Boundaries: ON");
+    }
     else
+    {
         SetTitle("myProgram - Block Boundaries: OFF");
+    }
 }
 
 //-----------------------------------------------------------------------------
 // MyFrame::OnKeyDown
+// B/b key toggles block boundary overlay
 //-----------------------------------------------------------------------------
 void MyFrame::OnKeyDown(wxKeyEvent& event)
 {
