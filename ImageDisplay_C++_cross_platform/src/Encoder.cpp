@@ -1,14 +1,21 @@
-//**
+//*****************************************************************************
 // Encoder.cpp : Splits image into blocks, applies DCT and quantization
 //
-// Pipeline per block per channel:
-//   1. Extract NxN block of pixel values
-//   2. Apply 2D DCT → 64 frequency coefficients
-//   3. Quantize: divide each coefficient by 2^Q and round to int
+// Mode 1: Fixed 8x8 blocks (standard JPEG-style)
+// Mode 2: Adaptive NxN blocks using quadtree decomposition
 //
-// The quantized coefficients are stored in BlockData structs
-// and later saved to a .DCT file.
-//*
+// Quadtree algorithm:
+//   - Start with MAX_BLOCK_SIZE (32x32) blocks
+//   - Compute variance of the block across all channels
+//   - If variance >= VARIANCE_THRESHOLD and N > MIN_BLOCK_SIZE: split into 4
+//   - Recurse on each quadrant
+//   - Result: large blocks in smooth regions, small blocks in detail regions
+//
+// Pipeline per block per channel:
+//   1. Extract NxN pixel values
+//   2. Apply 2D DCT
+//   3. Quantize by dividing by 2^Q and rounding to int
+//*****************************************************************************
 
 #include "Encoder.h"
 #include "DCT.h"
@@ -16,6 +23,7 @@
 #include <iostream>
 #include <fstream>
 #include <cstdlib>
+#include <algorithm>
 
 //-----------------------------------------------------------------------------
 // Constructor
@@ -33,7 +41,7 @@ Encoder::Encoder(MyImage* image, int M, int Q, float B)
 //-----------------------------------------------------------------------------
 void Encoder::encode()
 {
-    // If Q is -1, we need to auto-compute it from target BPP
+    // If Q is -1, auto-compute it from target BPP
     if (Q == -1)
     {
         computeQFromBPP();
@@ -42,37 +50,108 @@ void Encoder::encode()
 
     blocks.clear();
 
-    // For Mode 1: fixed 8x8 blocks
-    int N = (M == 1) ? 8 : 8; // Mode 2 will use variable N in Phase 4
-
-    for (int y = 0; y < height; y += N)
+    if (M == 1)
     {
-        for (int x = 0; x < width; x += N)
-        {
-            // Handle edge blocks that go out of bounds
-            int blockN = N;
-            if (x + N > width)  blockN = width  - x;
-            if (y + N > height) blockN = height - y;
-
-            // Only process square blocks for now
-            // Edge strips are handled by using the smaller dimension
-            int minDim = std::min(blockN, (y + N > height ? height - y : N));
-            if (minDim < 1) continue;
-
-            blocks.push_back(encodeBlock(x, y, N));
-        }
+        // Mode 1: fixed 8x8 blocks
+        int N = 8;
+        for (int y = 0; y < height; y += N)
+            for (int x = 0; x < width; x += N)
+                blocks.push_back(encodeBlock(x, y, N));
+    }
+    else
+    {
+        // Mode 2: adaptive NxN blocks using quadtree
+        // Start quadtree from MAX_BLOCK_SIZE tiles
+        for (int y = 0; y < height; y += MAX_BLOCK_SIZE)
+            for (int x = 0; x < width; x += MAX_BLOCK_SIZE)
+                buildQuadtree(x, y, MAX_BLOCK_SIZE);
     }
 
     std::cout << "Encoded " << blocks.size() << " blocks with Q=" << Q << std::endl;
 }
 
 //-----------------------------------------------------------------------------
+// computeVariance
+// Computes the variance of pixel values in an NxN region for one channel
+// Variance = average of (pixel - mean)^2
+// Used by quadtree to decide whether a block needs splitting
+//-----------------------------------------------------------------------------
+double Encoder::computeVariance(int startX, int startY, int N, int channel)
+{
+    char* data = image->getImageData();
+    double sum = 0.0;
+    double sumSq = 0.0;
+    int count = 0;
+
+    for (int row = 0; row < N; row++)
+    {
+        for (int col = 0; col < N; col++)
+        {
+            int px = startX + col;
+            int py = startY + row;
+
+            // Clamp to image boundaries
+            if (px >= width)  px = width  - 1;
+            if (py >= height) py = height - 1;
+
+            double val = (double)(unsigned char)data[(py * width + px) * 3 + channel];
+            sum   += val;
+            sumSq += val * val;
+            count++;
+        }
+    }
+
+    double mean = sum / count;
+    return (sumSq / count) - (mean * mean);
+}
+
+//-----------------------------------------------------------------------------
+// buildQuadtree
+// Recursively decides block sizes using variance as the splitting criterion
+//
+// Decision logic:
+//   - Compute max variance across all 3 channels for this block
+//   - If max variance >= VARIANCE_THRESHOLD AND N > MIN_BLOCK_SIZE:
+//       split into 4 quadrants of size N/2 and recurse
+//   - Otherwise: encode this block at size N
+//
+// This produces large blocks in smooth regions (sky, walls) and
+// small blocks in detailed regions (edges, textures, faces)
+//-----------------------------------------------------------------------------
+void Encoder::buildQuadtree(int startX, int startY, int N)
+{
+    // Compute variance across all 3 channels, take the maximum
+    double maxVariance = 0.0;
+    for (int ch = 0; ch < 3; ch++)
+    {
+        double v = computeVariance(startX, startY, N, ch);
+        if (v > maxVariance) maxVariance = v;
+    }
+
+    // Decide: split or keep?
+    if (maxVariance >= VARIANCE_THRESHOLD && N > MIN_BLOCK_SIZE)
+    {
+        // Split into 4 quadrants of size N/2
+        int half = N / 2;
+        buildQuadtree(startX,        startY,        half); // top-left
+        buildQuadtree(startX + half, startY,        half); // top-right
+        buildQuadtree(startX,        startY + half, half); // bottom-left
+        buildQuadtree(startX + half, startY + half, half); // bottom-right
+    }
+    else
+    {
+        // Keep this block — encode it at size N
+        blocks.push_back(encodeBlock(startX, startY, N));
+    }
+}
+
+//-----------------------------------------------------------------------------
 // encodeBlock
 // Encodes a single NxN block at pixel position (startX, startY)
 // For each of the 3 channels (R, G, B):
-//   - Extract pixel values into a 2D block
-//   - Apply DCT
-//   - Quantize by dividing by 2^Q
+//   1. Extract pixel values into a 2D block
+//   2. Apply 2D DCT
+//   3. Quantize by dividing by 2^Q and rounding
 //-----------------------------------------------------------------------------
 BlockData Encoder::encodeBlock(int startX, int startY, int N)
 {
@@ -80,14 +159,14 @@ BlockData Encoder::encodeBlock(int startX, int startY, int N)
     bd.startX = startX;
     bd.startY = startY;
     bd.N      = N;
-    bd.coeffs.resize(3); // 3 channels: R, G, B
+    bd.coeffs.resize(3);
 
-    double quantStep = pow(2.0, Q); // 2^Q
+    double quantStep = pow(2.0, Q);
     char* data = image->getImageData();
 
     for (int ch = 0; ch < 3; ch++)
     {
-        // Build NxN block of pixel values for this channel
+        // Extract NxN pixel block for this channel
         std::vector<std::vector<double>> block(N, std::vector<double>(N, 0.0));
 
         for (int row = 0; row < N; row++)
@@ -97,12 +176,10 @@ BlockData Encoder::encodeBlock(int startX, int startY, int N)
                 int px = startX + col;
                 int py = startY + row;
 
-                // Clamp to image boundaries for edge blocks
                 if (px >= width)  px = width  - 1;
                 if (py >= height) py = height - 1;
 
                 int idx = (py * width + px) * 3 + ch;
-                // Cast to unsigned char first to get 0-255 range
                 block[row][col] = (double)(unsigned char)data[idx];
             }
         }
@@ -125,16 +202,10 @@ BlockData Encoder::encodeBlock(int startX, int startY, int N)
 // Saves all quantized DCT coefficients to a binary file
 //
 // File format:
-//   [int] width
-//   [int] height
-//   [int] Q
-//   [int] M
-//   [int] numBlocks
-//   For each block:
+//   [int] width, height, Q, M, numBlocks
+//   Per block:
 //     [int] startX, startY, N
-//     For each channel (3):
-//       For each row (N):
-//         For each col (N): [int] quantized coefficient
+//     Per channel (3): Per row (N): Per col (N): [int] quantized coefficient
 //-----------------------------------------------------------------------------
 void Encoder::saveDCTFile(const std::string& path)
 {
@@ -145,7 +216,6 @@ void Encoder::saveDCTFile(const std::string& path)
         return;
     }
 
-    // Write header
     f.write((char*)&width,  sizeof(int));
     f.write((char*)&height, sizeof(int));
     f.write((char*)&Q,      sizeof(int));
@@ -154,7 +224,6 @@ void Encoder::saveDCTFile(const std::string& path)
     int numBlocks = (int)blocks.size();
     f.write((char*)&numBlocks, sizeof(int));
 
-    // Write each block
     for (const BlockData& bd : blocks)
     {
         f.write((char*)&bd.startX, sizeof(int));
@@ -173,13 +242,7 @@ void Encoder::saveDCTFile(const std::string& path)
 
 //-----------------------------------------------------------------------------
 // computeQFromBPP
-// Binary searches for a Q value that produces a compressed file
-// whose size / (width * height) is approximately equal to target B bpp
-//
-// Strategy:
-//   - Try Q values from 0 to 30
-//   - For each Q, encode, save .DCT, zip it, measure bpp
-//   - Find the smallest Q where bpp <= B
+// Binary searches for Q that produces compressed bpp <= target B
 //-----------------------------------------------------------------------------
 void Encoder::computeQFromBPP()
 {
@@ -193,18 +256,26 @@ void Encoder::computeQFromBPP()
 
         // Temporarily encode with this Q
         blocks.clear();
-        int N = (M == 1) ? 8 : 8;
-        for (int y = 0; y < height; y += N)
-            for (int x = 0; x < width; x += N)
-                blocks.push_back(encodeBlock(x, y, N));
+        if (M == 1)
+        {
+            int N = 8;
+            for (int y = 0; y < height; y += N)
+                for (int x = 0; x < width; x += N)
+                    blocks.push_back(encodeBlock(x, y, N));
+        }
+        else
+        {
+            for (int y = 0; y < height; y += MAX_BLOCK_SIZE)
+                for (int x = 0; x < width; x += MAX_BLOCK_SIZE)
+                    buildQuadtree(x, y, MAX_BLOCK_SIZE);
+        }
 
         // Save temp DCT file
         saveDCTFile("/tmp/test_bpp.DCT");
 
-        // Zip it and measure compressed size
+        // Zip and measure
         system("zip -q /tmp/test_bpp.DCT.zip /tmp/test_bpp.DCT");
-        
-        // Get zip file size
+
         std::ifstream zipFile("/tmp/test_bpp.DCT.zip", std::ios::binary | std::ios::ate);
         if (!zipFile.is_open()) continue;
         long zipSize = zipFile.tellg();
@@ -218,7 +289,5 @@ void Encoder::computeQFromBPP()
     }
 
     Q = bestQ;
-
-    // Clean up temp files
     system("rm -f /tmp/test_bpp.DCT /tmp/test_bpp.DCT.zip");
 }
