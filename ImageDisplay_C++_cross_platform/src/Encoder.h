@@ -5,12 +5,21 @@
 #include <vector>
 #include "Image.h"
 
+// Variance threshold for quadtree splitting decision
+// Blocks with variance >= this value will be split into smaller blocks
+// Empirically determined for natural images — see README for limitations
+#define VARIANCE_THRESHOLD 500.0
+
+// Minimum and maximum block sizes for Mode 2 adaptive encoding
+#define MIN_BLOCK_SIZE 4
+#define MAX_BLOCK_SIZE 32
+
 // Stores the quantized DCT coefficients for one block
 struct BlockData {
-    int startX;   // top-left x position of block in image
-    int startY;   // top-left y position of block in image
+    int startX;   // top-left x pixel position
+    int startY;   // top-left y pixel position
     int N;        // block size (NxN)
-    // quantized coefficients for each channel: [channel][row][col]
+    // quantized coefficients: [channel][row][col]
     std::vector<std::vector<std::vector<int>>> coeffs;
 };
 
@@ -18,7 +27,7 @@ class Encoder
 {
 public:
     // image  : input image to encode
-    // M      : 1 = fixed 8x8 blocks, 2 = adaptive NxN blocks
+    // M      : 1 = fixed 8x8 blocks, 2 = adaptive NxN quadtree blocks
     // Q      : quantization step (divide by 2^Q), or -1 to auto-compute
     // B      : target bits/pixel, or -1.0 if Q is given
     Encoder(MyImage* image, int M, int Q, float B);
@@ -29,7 +38,7 @@ public:
     // Save quantized DCT coefficients to a .DCT file
     void saveDCTFile(const std::string& path);
 
-    // Getters for decoder use
+    // Getters for decoder and display use
     int getQ()                                  { return Q; }
     int getWidth()                              { return width; }
     int getHeight()                             { return height; }
@@ -46,6 +55,14 @@ private:
 
     // Encode a single NxN block at position (startX, startY)
     BlockData encodeBlock(int startX, int startY, int N);
+
+    // Compute variance of a single channel in a region
+    // Used by quadtree to decide whether to split
+    double computeVariance(int startX, int startY, int N, int channel);
+
+    // Recursively build quadtree block map for Mode 2
+    // Splits block if variance >= VARIANCE_THRESHOLD and N > MIN_BLOCK_SIZE
+    void buildQuadtree(int startX, int startY, int N);
 
     // Auto-compute Q to hit target bits/pixel B
     void computeQFromBPP();
