@@ -141,7 +141,6 @@ LIMITATIONS
 
 -----------------------------------------------------------------------------
 FILE STRUCTURE
------------------------------------------------------------------------------
 
   src/
     Main.cpp      Entry point, argument parsing, wxWidgets display, B key
