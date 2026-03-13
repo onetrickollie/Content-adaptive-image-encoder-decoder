@@ -1,0 +1,156 @@
+Kaixiang Liu
+Language: C++
+Platform: Mac (primary), Windows (compatible via bundled wxWidgets)
+
+
+-----------------------------------------------------------------------------
+To run:
+
+Mac (requires Homebrew wxWidgets):
+  1. Install wxWidgets if not already installed:
+       brew install wxwidgets
+
+  2. From the ImageDisplay_C++_cross_platform/ folder:
+       cmake -B build
+       cmake --build build
+
+Windows:
+  1. Open ImageDisplay_C++_cross_platform/ in VS Code
+  2. Run: CMake: Configure
+  3. Run: CMake: Build
+  (Uses bundled wxWidgets in dependency/ folder)
+
+-----------------------------------------------------------------------------
+USAGE
+
+  ./myProgram InputImage M Q B
+
+  InputImage  Path to a 512x512 .rgb image file
+              (planar format: all R values, then G, then B)
+
+  M           Mode:
+                1 = Standard 8x8 fixed block DCT (JPEG-style)
+                2 = Adaptive NxN block DCT (quadtree-based)
+
+  Q           Quantization step: all DCT coefficients divided by 2^Q
+                Must be >= 0, OR set to -1 to auto-compute from B
+
+  B           Target bits per pixel (compressed .DCT file after zip)
+                Must be > 0.0, OR set to -1.0 if Q is provided
+
+  NOTE: Exactly one of Q or B must be -1. Both cannot be positive.
+
+Example invocations (matching assignment examples):
+  ./myProgram Example.rgb 1 0 -1      # No quantization, output = input
+  ./myProgram Example.rgb 1 10 -1     # Heavy quantization, blocky output
+  ./myProgram Example.rgb 2 1 -1      # Adaptive blocks, light quantization
+  ./myProgram Example.rgb 1 -1 1.5    # Auto Q for 1.5 bpp (Mode 1)
+  ./myProgram Example.rgb 2 -1 1.5    # Auto Q for 1.5 bpp (Mode 2)
+
+-----------------------------------------------------------------------------
+KEYBOARD CONTROLS
+
+  B / b       Toggle block boundary overlay on/off
+              Draws red rectangles showing the NxN block tiling
+              Works for both Mode 1 (uniform 8x8) and Mode 2 (variable NxN)
+
+-----------------------------------------------------------------------------
+OUTPUT FILES
+
+  <InputImage>.DCT    Binary file of quantized DCT coefficients
+                      Used for compression evaluation via zip metric:
+                        Compressed bpp = zip(file.DCT) / (width x height)
+
+-----------------------------------------------------------------------------
+ALGORITHM DESCRIPTION
+
+Mode 1 - Standard 8x8 DCT (JPEG-style):
+  1. Divide each channel into non-overlapping 8x8 blocks
+  2. Apply 2D DCT to each block (via separable 1D DCT on rows then columns)
+  3. Quantize each coefficient: round(coeff / 2^Q)
+  4. Decode: multiply by 2^Q, apply 2D IDCT, clamp to [0, 255]
+
+Mode 2 - Adaptive NxN Quadtree DCT:
+  The image is divided into variable-sized blocks using a quadtree algorithm.
+  Valid block sizes: {2, 4, 8, 16, 32} (all powers of 2 as per specification)
+
+  Quadtree Decision Algorithm:
+    1. Start with 32x32 tiles covering the image
+    2. For each tile, compute the pixel variance across all 3 RGB channels
+       Variance = E[x^2] - E[x]^2  (measures pixel value spread)
+    3. If max variance >= VARIANCE_THRESHOLD (500.0) AND block size > 2:
+         Split into 4 equal quadrants of size N/2 and recurse
+       Else:
+         Keep this block at size N and encode it
+
+  Why variance works as a splitting criterion:
+    - Low variance = smooth region (uniform sky, flat walls) → large block
+    - High variance = detailed region (edges, textures, faces) → small block
+    - Large blocks in smooth regions preserve quality with fewer coefficients
+    - Small blocks in detailed regions capture fine detail accurately
+
+  Result on Lena_512_512.rgb (Q=1):
+    2x2  blocks: 5632  (fine detail: hair, hat feather, facial features)
+    4x4  blocks: 1696  (moderate detail: face contours, fabric texture)
+    8x8  blocks:  632  (medium regions: shoulders, background transitions)
+    16x16 blocks: 232  (smoother regions: background, skin areas)
+    32x32 blocks: 110  (very smooth regions: plain background)
+
+  Why Mode 2 beats Mode 1 at the same bits/pixel:
+    Mode 1 wastes bits encoding high-frequency coefficients in smooth regions
+    that are near-zero anyway. Mode 2 uses large blocks there, which have
+    fewer total coefficients and compress better. The saved bits are
+    redistributed to detailed regions via smaller blocks, improving quality.
+
+Auto Q Search (when Q = -1):
+  Iterates Q from 0 upward, encoding the full image at each Q value,
+  saving a temporary .DCT file, zipping it, and measuring compressed bpp.
+  Stops at the first Q where bpp <= target B.
+  Formula: bpp = (zip_file_size_bytes * 8) / (width * height)
+
+DCT Implementation:
+  Uses the separable 2D DCT property: apply 1D DCT to all rows, then
+  all columns. This is mathematically equivalent to the full 2D formula.
+  Standard library <cmath> used for cos() and sqrt(). No external libraries.
+
+-----------------------------------------------------------------------------
+LIMITATIONS
+
+1. Variance threshold is hardcoded at 500.0 (defined as VARIANCE_THRESHOLD
+   in Encoder.h). This value was empirically determined using the Lena test
+   image. A different threshold may perform better on other image types
+   (e.g., high-contrast graphics, medical images). Future work could
+   auto-tune this threshold based on image statistics.
+
+2. Image size is fixed at 512x512 (defined as IMAGE_WIDTH/IMAGE_HEIGHT in
+   Image.h). The assignment specifies a fixed size will be provided.
+
+3. Edge blocks that extend beyond image boundaries are handled by clamping
+   pixel coordinates to the nearest valid pixel. Small strips at the right
+   and bottom edges may have slightly reduced accuracy.
+
+4. The auto-Q search uses a linear scan from Q=0 upward. A binary search
+   would be faster but the linear scan is simpler and reliable.
+
+5. The entropy coding step (Huffman/Arithmetic coding) is not implemented
+   as per the assignment specification. The zip utility is used as a
+   proxy for measuring compression efficiency.
+
+6. The system() calls for zip in the auto-Q search use Unix commands and
+   will not work on Windows without modification.
+
+-----------------------------------------------------------------------------
+FILE STRUCTURE
+-----------------------------------------------------------------------------
+
+  src/
+    Main.cpp      Entry point, argument parsing, wxWidgets display, B key
+    Image.h/.cpp  Image read/write (.rgb planar format)
+    DCT.h/.cpp    Forward and inverse 2D DCT (separable, standard library)
+    Encoder.h/.cpp  Block splitting, DCT, quantization, .DCT file output
+    Decoder.h/.cpp  Inverse quantization, IDCT, image reconstruction
+
+  CMakeLists.txt  Build configuration (Mac: Homebrew wxWidgets,
+                  Windows: bundled wxWidgets in dependency/)
+
+=============================================================================
